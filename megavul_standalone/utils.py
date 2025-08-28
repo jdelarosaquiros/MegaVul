@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Set
 
 from tree_sitter import Parser, Node, Language
+from git import Repo
 # Remove this line:
 # from tree_sitter_languages import get_language
 
@@ -40,6 +41,40 @@ class FunctionInfo:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
+
+
+@dataclass
+class FunctionDefinition:
+    name: str
+    file_path: str
+    signature: str
+    return_type: str
+    start_line: int
+    end_line: int
+    code: str
+
+
+@dataclass
+class CallInfo:
+    name: str
+    file_path: str
+    signature: str
+    return_type: str
+    start_line: int
+    end_line: int
+    code: str
+    callee_function: str
+    call_line: int
+
+
+@dataclass
+class FunctionCallAnalysis:
+    function_name: str
+    file_path: str
+    signature: str
+    return_type: str
+    callees: List[FunctionDefinition]  # Functions called by this function (with definitions)
+    callers: List[CallInfo]  # Functions that call this function (with definitions)
 
 
 LANGUAGE_EXT = {
@@ -123,6 +158,169 @@ def extract_functions(code: str, file_path: str = None) -> List[FunctionInfo]:
 
     traverse(root)
     return functions
+
+
+def extract_function_calls(code: str, file_path: str = None) -> List[str]:
+    """Extract function call names from code for given language."""
+    # Determine language from file path or default to C
+    language = "c"
+    if file_path:
+        detected_lang = language_from_path(file_path)
+        if detected_lang:
+            language = detected_lang
+
+    # Use appropriate tree-sitter language
+    if language == "c":
+        from tree_sitter_c import language as c_language
+        ts_language = Language(c_language())
+    elif language == "cpp":
+        from tree_sitter_cpp import language as cpp_language
+        ts_language = Language(cpp_language())
+    else:
+        # Default to C
+        from tree_sitter_c import language as c_language
+        ts_language = Language(c_language())
+        language = "c"
+
+    parser = Parser(ts_language)
+    tree = parser.parse(bytes(code, "utf-8"))
+    root = tree.root_node
+    calls: List[str] = []
+    source_bytes = bytes(code, "utf-8")
+
+    def traverse(node: Node):
+        if language in {"c", "cpp"} and node.type == "call_expression":
+            function_node = node.child_by_field_name("function")
+            if function_node:
+                call_name = _search_identifier(function_node, source_bytes)
+                if call_name:
+                    calls.append(call_name)
+        elif language == "java" and node.type == "method_invocation":
+            name_node = node.child_by_field_name("name")
+            if name_node:
+                call_name = _search_identifier(name_node, source_bytes)
+                if call_name:
+                    calls.append(call_name)
+
+        for child in node.children:
+            traverse(child)
+
+    traverse(root)
+    return list(set(calls))  # Remove duplicates
+
+
+def analyze_function_calls_in_repo(repo_path: str, target_functions: List[str], commit_hash: str = None) -> Dict[str, FunctionCallAnalysis]:
+    """Analyze callees and callers for target functions across the entire repository.
+    Only includes functions that have definitions found in the repository.
+    """
+    from git import Repo
+
+    repo = Repo(repo_path)
+
+    # Use specific commit if provided, otherwise use current HEAD
+    if commit_hash:
+        commit = repo.commit(commit_hash)
+        tree = commit.tree
+    else:
+        tree = repo.head.commit.tree
+
+    # Dictionary to store analysis results
+    analysis_results: Dict[str, FunctionCallAnalysis] = {}
+
+    # Dictionary to store all function definitions found in the repo
+    all_function_definitions: Dict[str, FunctionDefinition] = {}  # function_name -> FunctionDefinition
+
+    # First pass: collect all function definitions in the repository
+    for item in tree.traverse():
+        if item.type != 'blob':
+            continue
+
+        file_path = item.path
+        language = language_from_path(file_path)
+        if language is None:
+            continue
+
+        try:
+            file_content = item.data_stream.read().decode("utf-8")
+        except Exception:
+            continue
+
+        # Extract functions from this file
+        functions = extract_functions(file_content, file_path)
+
+        # Store all function definitions
+        for func in functions:
+            func_def = FunctionDefinition(
+                name=func.name,
+                file_path=file_path,
+                signature=func.signature,
+                return_type=func.return_type,
+                start_line=func.start_line,
+                end_line=func.end_line,
+                code=func.code
+            )
+            all_function_definitions[func.name] = func_def
+
+    # Initialize analysis for target functions that were found
+    for func_name in target_functions:
+        if func_name in all_function_definitions:
+            func_def = all_function_definitions[func_name]
+            analysis_results[func_name] = FunctionCallAnalysis(
+                function_name=func_name,
+                file_path=func_def.file_path,
+                signature=func_def.signature,
+                return_type=func_def.return_type,
+                callees=[],
+                callers=[]
+            )
+
+    # Second pass: analyze callees for target functions and find callers
+    for item in tree.traverse():
+        if item.type != 'blob':
+            continue
+
+        file_path = item.path
+        language = language_from_path(file_path)
+        if language is None:
+            continue
+
+        try:
+            file_content = item.data_stream.read().decode("utf-8")
+        except Exception:
+            continue
+
+        # Extract all functions from this file
+        functions = extract_functions(file_content, file_path)
+
+        for func in functions:
+            # If this is a target function, analyze its callees
+            if func.name in analysis_results:
+                calls = extract_function_calls(func.code, file_path)
+                # Only include callees that have definitions in the repo
+                for call in calls:
+                    if call in all_function_definitions:
+                        callee_def = all_function_definitions[call]
+                        analysis_results[func.name].callees.append(callee_def)
+
+            # Check if this function calls any of our target functions
+            calls = extract_function_calls(func.code, file_path)
+            for call in calls:
+                if call in analysis_results and func.name in all_function_definitions:
+                    caller_def = all_function_definitions[func.name]
+                    caller_info = CallInfo(
+                        name=func.name,
+                        file_path=caller_def.file_path,
+                        signature=caller_def.signature,
+                        return_type=caller_def.return_type,
+                        start_line=caller_def.start_line,
+                        end_line=caller_def.end_line,
+                        code=caller_def.code,
+                        callee_function=call,
+                        call_line=func.start_line  # Approximate line number
+                    )
+                    analysis_results[call].callers.append(caller_info)
+
+    return analysis_results
 
 
 def save_jsonl(data: List[dict], path: Path):

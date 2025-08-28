@@ -20,10 +20,10 @@ if __package__ in {None, ""}:
     import os
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from utils import extract_functions, diff_lines, language_from_path, save_jsonl
+    from utils import extract_functions, diff_lines, language_from_path, save_jsonl, analyze_function_calls_in_repo
     from filters import is_test_file, is_large_function, is_large_change
 else:  # pragma: no cover - normal package imports
-    from .utils import extract_functions, diff_lines, language_from_path, save_jsonl
+    from .utils import extract_functions, diff_lines, language_from_path, save_jsonl, analyze_function_calls_in_repo
     from .filters import is_test_file, is_large_function, is_large_change
 
 
@@ -58,6 +58,8 @@ def main() -> None:
     parser.add_argument("commit", help="Commit id of the fix")
     parser.add_argument("repo_path", help="Path to local repository")
     parser.add_argument("--output", default="extracted_functions.jsonl", help="Output JSONL file")
+    parser.add_argument("--analyze-calls", default=True, action="store_true",
+                       help="Analyze callees and callers of extracted functions (may be slow for large repos)")
     args = parser.parse_args()
 
     repo = Repo(args.repo_path)
@@ -100,6 +102,48 @@ def main() -> None:
 
     save_jsonl(results, Path(args.output))
     print(f"Saved {len(results)} functions to {args.output}")
+
+    # Extract callees and callers for the functions we found (if requested)
+    if args.analyze_calls and results:
+        print("Analyzing function calls (callees and callers)...")
+        function_names = [result["function"] for result in results]
+        call_analysis = analyze_function_calls_in_repo(args.repo_path, function_names, args.commit)
+
+        # Add call analysis to results
+        for result in results:
+            func_name = result["function"]
+            if func_name in call_analysis:
+                analysis = call_analysis[func_name]
+                result["callees"] = [
+                    {
+                        "name": callee.name,
+                        "file_path": callee.file_path,
+                        "signature": callee.signature,
+                        "return_type": callee.return_type,
+                        "start_line": callee.start_line,
+                        "end_line": callee.end_line,
+                        "code": callee.code
+                    }
+                    for callee in analysis.callees
+                ]
+                result["callers"] = [
+                    {
+                        "name": caller.name,
+                        "file_path": caller.file_path,
+                        "signature": caller.signature,
+                        "return_type": caller.return_type,
+                        "start_line": caller.start_line,
+                        "end_line": caller.end_line,
+                        "code": caller.code,
+                        "call_line": caller.call_line
+                    }
+                    for caller in analysis.callers
+                ]
+
+        # Save updated results with call analysis
+        output_with_calls = args.output.replace('.jsonl', '_with_calls.jsonl')
+        save_jsonl(results, Path(output_with_calls))
+        print(f"Saved {len(results)} functions with call analysis to {output_with_calls}")
 
 
 if __name__ == "__main__":
