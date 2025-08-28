@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 from tree_sitter import Parser, Node, Language
-from tree_sitter_cpp import language
 # Remove this line:
 # from tree_sitter_languages import get_language
 
