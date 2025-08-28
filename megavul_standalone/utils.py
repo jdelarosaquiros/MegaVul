@@ -5,8 +5,10 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Dict, Tuple
 
-from tree_sitter import Parser, Node
-from tree_sitter_languages import get_language
+from tree_sitter import Parser, Node, Language
+from tree_sitter_cpp import language
+# Remove this line:
+# from tree_sitter_languages import get_language
 
 
 def diff_lines(before: str, after: str) -> Tuple[str, Dict[str, List[str]]]:
@@ -66,10 +68,30 @@ def _search_identifier(node: Node, source: bytes) -> str | None:
     return None
 
 
-def extract_functions(code: str, language: str) -> List[FunctionInfo]:
+def extract_functions(code: str, file_path: str = None) -> List[FunctionInfo]:
     """Extract function definitions from code for given language."""
-    parser = Parser()
-    parser.set_language(get_language(language))
+    # Determine language from file path or default to C
+    language = "c"
+    if file_path:
+        detected_lang = language_from_path(file_path)
+        if detected_lang:
+            language = detected_lang
+    
+    # Use appropriate tree-sitter language
+    if language == "c":
+        from tree_sitter_c import language as c_language
+        ts_language = Language(c_language())
+    elif language == "cpp":
+        from tree_sitter_cpp import language as cpp_language
+        ts_language = Language(cpp_language())
+    else:
+        # Default to C
+        from tree_sitter_c import language as c_language
+        ts_language = Language(c_language())
+        language = "c"
+    
+    parser = Parser(ts_language)
+
     tree = parser.parse(bytes(code, "utf-8"))
     root = tree.root_node
     functions: List[FunctionInfo] = []
