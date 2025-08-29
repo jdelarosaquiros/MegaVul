@@ -23,9 +23,9 @@ if __package__ in {None, ""}:
     import os
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from utils import analyze_function_calls_in_repo, save_jsonl, extract_functions, language_from_path
+    from utils import analyze_function_calls_in_repo, analyze_function_calls_before_after, save_jsonl, extract_functions, language_from_path
 else:  # pragma: no cover - normal package imports
-    from .utils import analyze_function_calls_in_repo, save_jsonl, extract_functions, language_from_path
+    from .utils import analyze_function_calls_in_repo, analyze_function_calls_before_after, save_jsonl, extract_functions, language_from_path
 
 
 def load_functions_from_jsonl(jsonl_path: str) -> List[str]:
@@ -75,6 +75,9 @@ def main() -> None:
     input_group.add_argument("--from-files", nargs="+", help="Extract functions from these files")
     
     parser.add_argument("--commit", help="Commit hash to analyze (default: HEAD)")
+    parser.add_argument("--fix-commit", help="Fix commit hash for before/after comparison")
+    parser.add_argument("--compare-before-after", action="store_true",
+                       help="Compare callees and callers before and after the fix commit")
     parser.add_argument("--output", default="function_call_analysis.jsonl", help="Output JSONL file")
     
     args = parser.parse_args()
@@ -96,66 +99,256 @@ def main() -> None:
         print("No functions found to analyze")
         return
 
-    print(f"Analyzing {len(function_names)} functions: {', '.join(function_names[:5])}" + 
+    print(f"Analyzing {len(function_names)} functions: {', '.join(function_names[:5])}" +
           (f" and {len(function_names) - 5} more" if len(function_names) > 5 else ""))
 
+    # Validate arguments for before/after comparison
+    if args.compare_before_after and not args.fix_commit:
+        print("Error: --fix-commit is required when using --compare-before-after")
+        return
+
     # Perform call analysis
-    call_analysis = analyze_function_calls_in_repo(args.repo_path, function_names, args.commit)
+    if args.compare_before_after:
+        before_after_analysis = analyze_function_calls_before_after(args.repo_path, function_names, args.fix_commit)
+    else:
+        call_analysis = analyze_function_calls_in_repo(args.repo_path, function_names, args.commit or args.fix_commit)
 
     # Convert results to JSON-serializable format
     results = []
-    for func_name, analysis in call_analysis.items():
-        result = {
-            "function_name": func_name,
-            "file_path": analysis.file_path,
-            "signature": analysis.signature,
-            "return_type": analysis.return_type,
-            "callees": [
-                {
-                    "name": callee.name,
-                    "file_path": callee.file_path,
-                    "signature": callee.signature,
-                    "return_type": callee.return_type,
-                    "start_line": callee.start_line,
-                    "end_line": callee.end_line,
-                    "code": callee.code
+
+    if args.compare_before_after:
+        for func_name, (combined_analysis, comparison) in before_after_analysis.items():
+            result = {
+                "function_name": func_name,
+                "before_fix": {
+                    "file_path": combined_analysis.file_path_before,
+                    "signature": combined_analysis.signature_before,
+                    "return_type": combined_analysis.return_type_before,
+                    "callees": [
+                        {
+                            "name": callee.name,
+                            "file_path": callee.file_path,
+                            "signature": callee.signature,
+                            "return_type": callee.return_type,
+                            "start_line": callee.start_line,
+                            "end_line": callee.end_line,
+                            "code": callee.code
+                        }
+                        for callee in combined_analysis.callees_before
+                    ],
+                    "callers": [
+                        {
+                            "name": caller.name,
+                            "file_path": caller.file_path,
+                            "signature": caller.signature,
+                            "return_type": caller.return_type,
+                            "start_line": caller.start_line,
+                            "end_line": caller.end_line,
+                            "code": caller.code,
+                            "call_line": caller.call_line
+                        }
+                        for caller in combined_analysis.callers_before
+                    ]
+                },
+                "after_fix": {
+                    "file_path": combined_analysis.file_path_after,
+                    "signature": combined_analysis.signature_after,
+                    "return_type": combined_analysis.return_type_after,
+                    "callees": [
+                        {
+                            "name": callee.name,
+                            "file_path": callee.file_path,
+                            "signature": callee.signature,
+                            "return_type": callee.return_type,
+                            "start_line": callee.start_line,
+                            "end_line": callee.end_line,
+                            "code": callee.code
+                        }
+                        for callee in combined_analysis.callees_after
+                    ],
+                    "callers": [
+                        {
+                            "name": caller.name,
+                            "file_path": caller.file_path,
+                            "signature": caller.signature,
+                            "return_type": caller.return_type,
+                            "start_line": caller.start_line,
+                            "end_line": caller.end_line,
+                            "code": caller.code,
+                            "call_line": caller.call_line
+                        }
+                        for caller in combined_analysis.callers_after
+                    ]
+                },
+                "changes": {
+                    "added_callees": [
+                        {
+                            "name": callee.name,
+                            "file_path": callee.file_path,
+                            "signature": callee.signature,
+                            "return_type": callee.return_type,
+                            "start_line": callee.start_line,
+                            "end_line": callee.end_line,
+                            "code": callee.code
+                        }
+                        for callee in comparison.added_callees
+                    ],
+                    "removed_callees": [
+                        {
+                            "name": callee.name,
+                            "file_path": callee.file_path,
+                            "signature": callee.signature,
+                            "return_type": callee.return_type,
+                            "start_line": callee.start_line,
+                            "end_line": callee.end_line,
+                            "code": callee.code
+                        }
+                        for callee in comparison.removed_callees
+                    ],
+                    "unchanged_callees": [
+                        {
+                            "name": callee.name,
+                            "file_path": callee.file_path,
+                            "signature": callee.signature,
+                            "return_type": callee.return_type,
+                            "start_line": callee.start_line,
+                            "end_line": callee.end_line,
+                            "code": callee.code
+                        }
+                        for callee in comparison.unchanged_callees
+                    ],
+                    "added_callers": [
+                        {
+                            "name": caller.name,
+                            "file_path": caller.file_path,
+                            "signature": caller.signature,
+                            "return_type": caller.return_type,
+                            "start_line": caller.start_line,
+                            "end_line": caller.end_line,
+                            "code": caller.code,
+                            "call_line": caller.call_line
+                        }
+                        for caller in comparison.added_callers
+                    ],
+                    "removed_callers": [
+                        {
+                            "name": caller.name,
+                            "file_path": caller.file_path,
+                            "signature": caller.signature,
+                            "return_type": caller.return_type,
+                            "start_line": caller.start_line,
+                            "end_line": caller.end_line,
+                            "code": caller.code,
+                            "call_line": caller.call_line
+                        }
+                        for caller in comparison.removed_callers
+                    ],
+                    "unchanged_callers": [
+                        {
+                            "name": caller.name,
+                            "file_path": caller.file_path,
+                            "signature": caller.signature,
+                            "return_type": caller.return_type,
+                            "start_line": caller.start_line,
+                            "end_line": caller.end_line,
+                            "code": caller.code,
+                            "call_line": caller.call_line
+                        }
+                        for caller in comparison.unchanged_callers
+                    ]
+                },
+                "summary": {
+                    "before_fix": {
+                        "num_callees": len(combined_analysis.callees_before),
+                        "num_callers": len(combined_analysis.callers_before),
+                        "unique_caller_files": len(set(caller.file_path for caller in combined_analysis.callers_before))
+                    },
+                    "after_fix": {
+                        "num_callees": len(combined_analysis.callees_after),
+                        "num_callers": len(combined_analysis.callers_after),
+                        "unique_caller_files": len(set(caller.file_path for caller in combined_analysis.callers_after))
+                    },
+                    "changes": {
+                        "added_callees": len(comparison.added_callees),
+                        "removed_callees": len(comparison.removed_callees),
+                        "unchanged_callees": len(comparison.unchanged_callees),
+                        "added_callers": len(comparison.added_callers),
+                        "removed_callers": len(comparison.removed_callers),
+                        "unchanged_callers": len(comparison.unchanged_callers)
+                    }
                 }
-                for callee in analysis.callees
-            ],
-            "callers": [
-                {
-                    "name": caller.name,
-                    "file_path": caller.file_path,
-                    "signature": caller.signature,
-                    "return_type": caller.return_type,
-                    "start_line": caller.start_line,
-                    "end_line": caller.end_line,
-                    "code": caller.code,
-                    "call_line": caller.call_line
-                }
-                for caller in analysis.callers
-            ],
-            "summary": {
-                "num_callees": len(analysis.callees),
-                "num_callers": len(analysis.callers),
-                "unique_caller_files": len(set(caller.file_path for caller in analysis.callers))
             }
-        }
-        results.append(result)
+            results.append(result)
+    else:
+        for func_name, analysis in call_analysis.items():
+            result = {
+                "function_name": func_name,
+                "file_path": analysis.file_path,
+                "signature": analysis.signature,
+                "return_type": analysis.return_type,
+                "callees": [
+                    {
+                        "name": callee.name,
+                        "file_path": callee.file_path,
+                        "signature": callee.signature,
+                        "return_type": callee.return_type,
+                        "start_line": callee.start_line,
+                        "end_line": callee.end_line,
+                        "code": callee.code
+                    }
+                    for callee in analysis.callees
+                ],
+                "callers": [
+                    {
+                        "name": caller.name,
+                        "file_path": caller.file_path,
+                        "signature": caller.signature,
+                        "return_type": caller.return_type,
+                        "start_line": caller.start_line,
+                        "end_line": caller.end_line,
+                        "code": caller.code,
+                        "call_line": caller.call_line
+                    }
+                    for caller in analysis.callers
+                ],
+                "summary": {
+                    "num_callees": len(analysis.callees),
+                    "num_callers": len(analysis.callers),
+                    "unique_caller_files": len(set(caller.file_path for caller in analysis.callers))
+                }
+            }
+            results.append(result)
 
     # Save results
     save_jsonl(results, Path(args.output))
     print(f"Saved call analysis for {len(results)} functions to {args.output}")
     
     # Print summary
-    total_callees = sum(len(r["callees"]) for r in results)
-    total_callers = sum(len(r["callers"]) for r in results)
     print(f"\nSummary:")
     print(f"  Functions analyzed: {len(results)}")
-    print(f"  Total callees found: {total_callees}")
-    print(f"  Total callers found: {total_callers}")
-    print(f"  Average callees per function: {total_callees / len(results):.1f}")
-    print(f"  Average callers per function: {total_callers / len(results):.1f}")
+
+    if args.compare_before_after:
+        total_before_callees = sum(len(r["before_fix"]["callees"]) for r in results)
+        total_after_callees = sum(len(r["after_fix"]["callees"]) for r in results)
+        total_before_callers = sum(len(r["before_fix"]["callers"]) for r in results)
+        total_after_callers = sum(len(r["after_fix"]["callers"]) for r in results)
+        total_added_callees = sum(len(r["changes"]["added_callees"]) for r in results)
+        total_removed_callees = sum(len(r["changes"]["removed_callees"]) for r in results)
+        total_added_callers = sum(len(r["changes"]["added_callers"]) for r in results)
+        total_removed_callers = sum(len(r["changes"]["removed_callers"]) for r in results)
+
+        print(f"  Before fix - Total callees: {total_before_callees}, Total callers: {total_before_callers}")
+        print(f"  After fix - Total callees: {total_after_callees}, Total callers: {total_after_callers}")
+        print(f"  Changes - Added callees: {total_added_callees}, Removed callees: {total_removed_callees}")
+        print(f"  Changes - Added callers: {total_added_callers}, Removed callers: {total_removed_callers}")
+    else:
+        total_callees = sum(len(r["callees"]) for r in results)
+        total_callers = sum(len(r["callers"]) for r in results)
+        print(f"  Total callees found: {total_callees}")
+        print(f"  Total callers found: {total_callers}")
+        if len(results) > 0:
+            print(f"  Average callees per function: {total_callees / len(results):.1f}")
+            print(f"  Average callers per function: {total_callers / len(results):.1f}")
 
 
 if __name__ == "__main__":

@@ -77,6 +77,31 @@ class FunctionCallAnalysis:
     callers: List[CallInfo]  # Functions that call this function (with definitions)
 
 
+@dataclass
+class FunctionCallAnalysisBeforeAfter:
+    function_name: str
+    file_path_before: str
+    file_path_after: str
+    signature_before: str
+    signature_after: str
+    return_type_before: str
+    return_type_after: str
+    callees_before: List[FunctionDefinition]
+    callees_after: List[FunctionDefinition]
+    callers_before: List[CallInfo]
+    callers_after: List[CallInfo]
+
+
+@dataclass
+class CallAnalysisComparison:
+    added_callees: List[FunctionDefinition]      # New functions called after fix
+    removed_callees: List[FunctionDefinition]    # Functions no longer called after fix
+    unchanged_callees: List[FunctionDefinition]  # Functions called both before and after
+    added_callers: List[CallInfo]                # New callers after fix
+    removed_callers: List[CallInfo]              # Callers removed after fix
+    unchanged_callers: List[CallInfo]            # Callers present both before and after
+
+
 LANGUAGE_EXT = {
     "c": {"c"},
     "cpp": {"cc", "cpp", "cxx", "hpp", "hh", "hxx"},
@@ -321,6 +346,107 @@ def analyze_function_calls_in_repo(repo_path: str, target_functions: List[str], 
                     analysis_results[call].callers.append(caller_info)
 
     return analysis_results
+
+
+def compare_call_analysis(before: FunctionCallAnalysis, after: FunctionCallAnalysis) -> CallAnalysisComparison:
+    """Compare function call analysis before and after to identify changes."""
+
+    # Compare callees
+    before_callees = {f.name: f for f in before.callees}
+    after_callees = {f.name: f for f in after.callees}
+
+    added_callees = [after_callees[name] for name in after_callees.keys() - before_callees.keys()]
+    removed_callees = [before_callees[name] for name in before_callees.keys() - after_callees.keys()]
+    unchanged_callees = [after_callees[name] for name in before_callees.keys() & after_callees.keys()]
+
+    # Compare callers
+    before_callers = {f.name: f for f in before.callers}
+    after_callers = {f.name: f for f in after.callers}
+
+    added_callers = [after_callers[name] for name in after_callers.keys() - before_callers.keys()]
+    removed_callers = [before_callers[name] for name in before_callers.keys() - after_callers.keys()]
+    unchanged_callers = [after_callers[name] for name in before_callers.keys() & after_callers.keys()]
+
+    return CallAnalysisComparison(
+        added_callees=added_callees,
+        removed_callees=removed_callees,
+        unchanged_callees=unchanged_callees,
+        added_callers=added_callers,
+        removed_callers=removed_callers,
+        unchanged_callers=unchanged_callers
+    )
+
+
+def analyze_function_calls_before_after(repo_path: str, target_functions: List[str], fix_commit_hash: str) -> Dict[str, Tuple[FunctionCallAnalysisBeforeAfter, CallAnalysisComparison]]:
+    """Analyze callees and callers for target functions before and after a fix commit."""
+    from git import Repo
+
+    repo = Repo(repo_path)
+    fix_commit = repo.commit(fix_commit_hash)
+
+    if not fix_commit.parents:
+        raise ValueError("Fix commit has no parent; cannot compare before/after")
+
+    parent_commit = fix_commit.parents[0]
+
+    # Analyze before (parent commit) and after (fix commit)
+    print("Analyzing function calls before fix...")
+    before_analysis = analyze_function_calls_in_repo(repo_path, target_functions, parent_commit.hexsha)
+
+    print("Analyzing function calls after fix...")
+    after_analysis = analyze_function_calls_in_repo(repo_path, target_functions, fix_commit_hash)
+
+    results = {}
+
+    for func_name in target_functions:
+        before_func = before_analysis.get(func_name)
+        after_func = after_analysis.get(func_name)
+
+        if before_func is None and after_func is None:
+            continue  # Function not found in either commit
+
+        # Handle cases where function exists in only one commit
+        if before_func is None:
+            before_func = FunctionCallAnalysis(
+                function_name=func_name,
+                file_path="",
+                signature="",
+                return_type="",
+                callees=[],
+                callers=[]
+            )
+
+        if after_func is None:
+            after_func = FunctionCallAnalysis(
+                function_name=func_name,
+                file_path="",
+                signature="",
+                return_type="",
+                callees=[],
+                callers=[]
+            )
+
+        # Create combined analysis
+        combined_analysis = FunctionCallAnalysisBeforeAfter(
+            function_name=func_name,
+            file_path_before=before_func.file_path,
+            file_path_after=after_func.file_path,
+            signature_before=before_func.signature,
+            signature_after=after_func.signature,
+            return_type_before=before_func.return_type,
+            return_type_after=after_func.return_type,
+            callees_before=before_func.callees,
+            callees_after=after_func.callees,
+            callers_before=before_func.callers,
+            callers_after=after_func.callers
+        )
+
+        # Create comparison
+        comparison = compare_call_analysis(before_func, after_func)
+
+        results[func_name] = (combined_analysis, comparison)
+
+    return results
 
 
 def save_jsonl(data: List[dict], path: Path):

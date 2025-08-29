@@ -7,6 +7,8 @@ This extension to the MegaVul function extraction tool adds the ability to analy
 - **Callees Analysis**: Find all functions called by the target functions (only those with definitions in the repo)
 - **Callers Analysis**: Find all functions that call the target functions (only those with definitions in the repo)
 - **Complete Function Code**: Includes the full source code of both callees and callers
+- **Before/After Comparison**: Compare function call relationships before and after a fix commit
+- **Change Detection**: Identify added, removed, and unchanged callees/callers
 - **Cross-file Analysis**: Search across all files in the repository to find relationships
 - **Multiple Language Support**: Supports C, C++, and Java (same as the base extraction tool)
 - **External Dependency Filtering**: Excludes standard library functions and external dependencies that don't have definitions in the repository
@@ -42,6 +44,22 @@ This will create two files:
 - `functions_with_calls.jsonl`: Original extraction results
 - `functions_with_calls_with_calls.jsonl`: Results enhanced with call analysis
 
+### Option 1b: Include before/after call analysis in main extraction
+
+```bash
+python extract_commit_functions.py \
+    https://github.com/example/repo \
+    abc123def456 \
+    /path/to/local/repo \
+    --analyze-calls \
+    --compare-before-after \
+    --output functions_with_comparison.jsonl
+```
+
+This will create two files:
+- `functions_with_comparison.jsonl`: Original extraction results
+- `functions_with_comparison_with_call_comparison.jsonl`: Results with before/after call analysis
+
 ### Option 2: Analyze specific functions
 
 ```bash
@@ -67,6 +85,28 @@ python analyze_function_calls.py \
     /path/to/repo \
     --from-files src/vulnerable.c src/helper.c \
     --output call_analysis.jsonl
+```
+
+### Option 5: Compare function calls before and after fix
+
+```bash
+python analyze_function_calls.py \
+    /path/to/repo \
+    --functions vulnerable_function \
+    --fix-commit abc123def456 \
+    --compare-before-after \
+    --output call_comparison.jsonl
+```
+
+### Option 6: Compare calls from previous extraction before/after fix
+
+```bash
+python analyze_function_calls.py \
+    /path/to/repo \
+    --from-jsonl extracted_functions.jsonl \
+    --fix-commit abc123def456 \
+    --compare-before-after \
+    --output call_comparison.jsonl
 ```
 
 ## Output Format
@@ -120,6 +160,49 @@ The enhanced output includes:
 ```
 
 **Note**: Only functions with definitions found in the repository are included. External dependencies like `malloc`, `strcpy`, `printf` are automatically filtered out.
+
+### Before/After Comparison Output
+
+When using `--compare-before-after`, the output includes detailed comparison:
+
+```json
+{
+  "repo_url": "https://github.com/example/repo",
+  "commit": "fix_commit_hash",
+  "parent_commit": "parent_commit_hash",
+  "file_path": "src/vulnerable.c",
+  "language": "c",
+  "function": "vulnerable_function",
+  "before": "// function code before fix",
+  "after": "// function code after fix",
+  "diff": "// unified diff",
+
+  "call_analysis": {
+    "before_fix": {
+      "file_path": "src/vulnerable.c",
+      "signature": "(char* input)",
+      "return_type": "int",
+      "callees": [...],
+      "callers": [...]
+    },
+    "after_fix": {
+      "file_path": "src/vulnerable.c",
+      "signature": "(char* input)",
+      "return_type": "int",
+      "callees": [...],
+      "callers": [...]
+    },
+    "changes": {
+      "added_callees": [...],      // Functions newly called after fix
+      "removed_callees": [...],    // Functions no longer called after fix
+      "unchanged_callees": [...],  // Functions called both before and after
+      "added_callers": [...],      // New callers after fix
+      "removed_callers": [...],    // Callers removed after fix
+      "unchanged_callers": [...]   // Callers present both before and after
+    }
+  }
+}
+```
 
 ## Implementation Details
 
