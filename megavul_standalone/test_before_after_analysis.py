@@ -10,9 +10,9 @@ from git import Repo
 if __package__ in {None, ""}:
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from utils import analyze_function_calls_before_after
+    from megavul_standalone.utils.commit_analysis import analyze_function_call_pairs
 else:
-    from .utils import analyze_function_calls_before_after
+    from .utils.commit_analysis import analyze_function_call_pairs
 
 
 def create_test_repo_with_fix():
@@ -102,7 +102,7 @@ def test_before_after_analysis():
     try:
         # Analyze the vulnerable_function before and after the fix
         target_functions = ["vulnerable_function"]
-        analysis = analyze_function_calls_before_after(temp_dir, target_functions, fix_commit)
+        analysis = analyze_function_call_pairs(temp_dir, target_functions, fix_commit)
         
         if "vulnerable_function" in analysis:
             combined_analysis, comparison = analysis["vulnerable_function"]

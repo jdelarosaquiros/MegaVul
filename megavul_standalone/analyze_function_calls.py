@@ -23,9 +23,9 @@ if __package__ in {None, ""}:
     import os
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from utils import analyze_function_calls_in_repo, analyze_function_calls_before_after, save_jsonl, extract_functions, language_from_path
+    from megavul_standalone.utils.commit_analysis import analyze_function_calls, analyze_function_call_pairs, save_jsonl, extract_functions, language_from_path
 else:  # pragma: no cover - normal package imports
-    from .utils import analyze_function_calls_in_repo, analyze_function_calls_before_after, save_jsonl, extract_functions, language_from_path
+    from .utils.commit_analysis import analyze_function_calls, analyze_function_call_pairs, save_jsonl, extract_functions, language_from_path
 
 
 def load_functions_from_jsonl(jsonl_path: str) -> List[str]:
@@ -109,9 +109,9 @@ def main() -> None:
 
     # Perform call analysis
     if args.compare_before_after:
-        before_after_analysis = analyze_function_calls_before_after(args.repo_path, function_names, args.fix_commit)
+        before_after_analysis = analyze_function_call_pairs(args.repo_path, function_names, args.fix_commit)
     else:
-        call_analysis = analyze_function_calls_in_repo(args.repo_path, function_names, args.commit or args.fix_commit)
+        call_analysis = analyze_function_calls(args.repo_path, function_names, args.commit or args.fix_commit)
 
     # Convert results to JSON-serializable format
     results = []

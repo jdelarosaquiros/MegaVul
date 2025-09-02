@@ -10,9 +10,9 @@ from git import Repo
 if __package__ in {None, ""}:
     import sys
     sys.path.append(os.path.dirname(__file__))
-    from utils import analyze_function_calls_in_repo, extract_function_calls, extract_functions
+    from megavul_standalone.utils.commit_analysis import analyze_function_calls, extract_function_calls, extract_functions
 else:
-    from .utils import analyze_function_calls_in_repo, extract_function_calls, extract_functions
+    from .utils.commit_analysis import analyze_function_calls, extract_function_calls, extract_functions
 
 
 def create_test_repo():
@@ -134,16 +134,16 @@ static void helper() {
         print(f"✗ extract_functions test failed. Expected {expected_functions}, got {found_functions}")
 
 
-def test_analyze_function_calls_in_repo():
+def test_analyze_function_calls():
     """Test the full repository analysis."""
-    print("\nTesting analyze_function_calls_in_repo...")
+    print("\nTesting analyze_function_calls...")
     
     temp_dir, repo = create_test_repo()
     
     try:
         # Analyze the target_function
         target_functions = ["target_function"]
-        analysis = analyze_function_calls_in_repo(temp_dir, target_functions)
+        analysis = analyze_function_calls(temp_dir, target_functions)
         
         if "target_function" in analysis:
             result = analysis["target_function"]
@@ -184,7 +184,7 @@ def main():
     
     test_extract_function_calls()
     test_extract_functions()
-    test_analyze_function_calls_in_repo()
+    test_analyze_function_calls()
     
     print("\nAll tests completed!")
 

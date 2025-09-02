@@ -19,7 +19,7 @@ This extension to the MegaVul function extraction tool adds the ability to analy
    - `CallInfo`: Information about a function call site
    - `FunctionCallAnalysis`: Complete analysis of a function's callees and callers
    - `extract_function_calls()`: Extract function calls from code using tree-sitter
-   - `analyze_function_calls_in_repo()`: Analyze callees/callers across entire repository
+   - `analyze_function_calls()`: Analyze callees/callers across entire repository
 
 2. **Enhanced `extract_commit_functions.py`**: Added `--analyze-calls` option to include call analysis in the main extraction workflow
 

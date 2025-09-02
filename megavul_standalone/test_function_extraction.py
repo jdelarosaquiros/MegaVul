@@ -8,7 +8,7 @@ import sys
 # Add the megavul_standalone directory to path
 sys.path.append(str(Path(__file__).parent / "megavul_standalone"))
 
-from utils import extract_functions, language_from_path
+from megavul_standalone.utils.commit_analysis import extract_functions, language_from_path
 
 
 def test_extract_functions(file_path: str):
